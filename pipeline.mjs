@@ -26,7 +26,47 @@ async function fetchTrends() {
   return titles;
 }
 
-// ---- 2. Gemini 카피 생성 ----
+// ---- 2. Gemini 공통 헬퍼 (재시도·모델폴백·JSON) ----
+async function geminiJSON(prompt, temperature = 0.9) {
+  const models = ['gemini-2.5-flash', 'gemini-2.5-flash-lite'];
+  let j, lastErr;
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const model = models[Math.min(attempt, models.length - 1)];
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
+    try {
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'x-goog-api-key': GEMINI_KEY },
+        body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }], generationConfig: { temperature, responseMimeType: 'application/json' } })
+      });
+      j = await res.json();
+      if (res.ok && j.candidates) break;
+      lastErr = 'Gemini ' + res.status + ' ' + JSON.stringify(j).slice(0, 160);
+      if (res.ok || ![429, 500, 503].includes(res.status)) throw new Error(lastErr);
+    } catch (e) { lastErr = e.message; }
+    await new Promise(r => setTimeout(r, 2000 * (attempt + 1)));
+  }
+  if (!j?.candidates) throw new Error('Gemini 최종실패: ' + lastErr);
+  const txt = (j.candidates[0]?.content?.parts?.[0]?.text || '').replace(/^```json\s*|\s*```$/g, '').trim();
+  return JSON.parse(txt);
+}
+
+// ---- 2-a. AI 안전 게이트 (fail-closed) ----
+async function safetyGate(keyword) {
+  const prompt = `너는 SNS 자동발행 안전 심사관이다. 키워드 "${keyword}"로 일반 공개 계정에 정보성 카드뉴스를 자동 게시하려 한다.
+아래 중 하나라도 해당하면 위험(unsafe): 특정 실존 인물(연예인·정치인·운동선수 등 개인 이름)·정치/선거·성/성적지향/성인·사망/사고/재난/범죄·질병/의료 논란·종교 갈등·혐오/차별·투자권유·논란/스캔들·상표/브랜드 분쟁.
+정보성으로 안전한 일반 주제(생활·경제일반·기술·과학·스포츠 일반·문화·상식·제품/서비스 일반)만 안전(safe).
+JSON만: {"safe": true|false, "category": "분류", "reason": "10자내외"}`;
+  try { return await geminiJSON(prompt, 0.1); }
+  catch (e) { return { safe: false, category: 'error', reason: '심사실패' }; }
+}
+
+// 트렌드가 모두 걸러졌을 때 쓰는 안전 주제풀 (매 회차 반드시 발행 보장)
+const SAFE_TOPICS = ['생활 속 절세 팁', '초보 재테크 기초', '스마트폰 배터리 오래 쓰는 법', '집중력 높이는 습관',
+  '냉장고 정리의 기술', '수면의 질 높이는 법', '엑셀 단축키 모음', '전기요금 아끼는 법',
+  '알아두면 쓸모있는 생활 법률', '커피 맛있게 내리는 법', '운동 초보 루틴', '시간관리 기법'];
+
+// ---- 2-b. 카피 생성 ----
 async function genCopy(keyword) {
   const prompt = `너는 한국어 SNS 콘텐츠 작가다. 키워드 "${keyword}"로 인스타 카드뉴스 + 스레드 글을 만든다.
 독자가 "몰랐던 사실/맥락"을 알게 되는 정보성 콘텐츠. 과장·허위·투자권유·정치·자극 금지. 반드시 아래 JSON만 출력(마크다운·설명 금지):
@@ -46,31 +86,7 @@ async function genCopy(keyword) {
  ]
 }
 정확히 8장. 2~7번은 내용으로 채운다.`;
-  const models = ['gemini-2.5-flash', 'gemini-2.5-flash-lite'];
-  let j, lastErr;
-  outer:
-  for (let attempt = 0; attempt < 5; attempt++) {
-    const model = models[Math.min(attempt, models.length - 1)];
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
-    try {
-      const res = await fetch(url, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json', 'x-goog-api-key': GEMINI_KEY },
-        body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }], generationConfig: { temperature: 0.9, responseMimeType: 'application/json' } })
-      });
-      j = await res.json();
-      if (res.ok) break outer;
-      lastErr = 'Gemini ' + res.status + ' ' + JSON.stringify(j).slice(0, 160);
-      if (![429, 500, 503].includes(res.status)) throw new Error(lastErr);
-    } catch (e) { lastErr = e.message; }
-    const wait = 2000 * (attempt + 1);
-    console.log('[pipe] Gemini 재시도', attempt + 1, '/5 (' + wait + 'ms):', lastErr);
-    await new Promise(r => setTimeout(r, wait));
-  }
-  if (!j?.candidates) throw new Error('Gemini 최종실패: ' + lastErr);
-  let txt = j.candidates?.[0]?.content?.parts?.[0]?.text || '';
-  txt = txt.replace(/^```json\s*|\s*```$/g, '').trim();
-  return JSON.parse(txt);
+  return geminiJSON(prompt, 0.9);
 }
 
 // ---- 3. 카드 렌더 ----
@@ -168,8 +184,22 @@ const log = (...a) => console.log('[pipe]', ...a);
   const skipped = trends.filter(t => !okKeyword(t));
   log('필터 통과:', safe.slice(0, 6).join(' | '));
   log('컴플라이언스 스킵:', skipped.slice(0, 6).join(' | ') || '(없음)');
-  const keyword = safe[Number(SLOT)] || safe[0];
-  if (!keyword) { log('발행 가능한 안전 키워드 없음 — 이 회차 스킵'); return; }
+  // AI 안전 게이트: 통과 키워드만 수집 → slot-번째 선택, 부족하면 안전 주제풀 폴백
+  const slot = Number(SLOT);
+  const passers = [], gateLog = [];
+  for (const cand of safe.slice(0, 10)) {
+    const g = await safetyGate(cand);
+    gateLog.push(`${cand}→${g.safe ? '✅' : '⛔'}(${g.reason})`);
+    if (g.safe) passers.push(cand);
+    if (passers.length > slot) break;
+  }
+  log('AI게이트:', gateLog.join(' | '));
+  let keyword = passers[slot];
+  if (!keyword) {
+    const idx = (Number((process.env.RUN_DATE || '0').replaceAll('-', '')) + slot) % SAFE_TOPICS.length;
+    keyword = SAFE_TOPICS[idx];
+    log('트렌드 안전 키워드 부족 → 안전 주제풀 폴백:', keyword);
+  }
   log('선택 키워드:', keyword);
 
   const copy = await genCopy(keyword);
