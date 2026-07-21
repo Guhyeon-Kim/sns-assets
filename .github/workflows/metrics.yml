@@ -1,0 +1,29 @@
+name: 성과 실측
+
+# 매일 게시물 인사이트(도달·저장·조회 등)를 수집해 metrics.jsonl에 누적.
+on:
+  schedule:
+    - cron: '0 6 * * *'   # 매일 15:00 KST
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  metrics:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: git 신원
+        run: |
+          git config user.name "sns-bot"
+          git config user.email "actions@users.noreply.github.com"
+      - name: 성과 수집
+        env:
+          IG_TOK: ${{ secrets.IG_TOK }}
+          TH_TOK: ${{ secrets.TH_TOK }}
+        run: |
+          RUN_DATE=$(TZ=Asia/Seoul date +%F) node metrics.mjs

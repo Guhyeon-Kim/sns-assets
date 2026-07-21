@@ -180,6 +180,17 @@ function hostImages(srcDir, folder) {
   return `https://cdn.jsdelivr.net/gh/${REPO}@main/${folder}`;
 }
 
+// ---- 4-b. 발행 기록 (성과 실측용) ----
+async function recordPost(rec) {
+  const fp = path.join(ROOT, 'posts.jsonl');
+  await fs.appendFile(fp, JSON.stringify(rec) + '\n');
+  try {
+    execFileSync('git', ['-C', ROOT, 'add', 'posts.jsonl']);
+    execFileSync('git', ['-C', ROOT, 'commit', '-m', `log post ${rec.date}-s${rec.slot}`], { stdio: 'ignore' });
+    execFileSync('git', ['-C', ROOT, 'push', '-q', 'origin', 'main']);
+  } catch { /* 기록 실패는 발행에 영향 없음 */ }
+}
+
 // ---- 5. 발행 ----
 async function fapi(base, ep, params, tok) {
   const body = new URLSearchParams({ ...params, access_token: tok });
@@ -273,4 +284,6 @@ const log = (...a) => console.log('[pipe]', ...a);
   log('THREADS 발행:', tid);
   const iid = await publishIG(copy.ig_caption, urls, process.env.IG_TOK);
   log('INSTAGRAM 발행:', iid);
+  await recordPost({ date: process.env.RUN_DATE || '', slot, keyword, topic: copy.topic, ig_id: iid, th_id: tid, folder });
+  log('발행 기록 저장(posts.jsonl)');
 })().catch(e => { console.error('[pipe][ERROR]', e.message); process.exit(1); });
