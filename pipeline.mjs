@@ -72,7 +72,7 @@ async function genCopy(keyword) {
 독자가 "몰랐던 사실/맥락"을 알게 되는 정보성 콘텐츠. 과장·허위·투자권유·정치·자극 금지. 반드시 아래 JSON만 출력(마크다운·설명 금지):
 {
  "topic": "이 키워드를 다루는 구체 앵글 한 줄",
- "threads_text": "500자 이내. 후킹 첫 줄 + 핵심 2~3문단 + 마지막 답글 유도 질문. 이모지 최소.",
+ "threads_text": "반드시 450자 이내(엄수). 후킹 첫 줄 + 핵심 2~3문단 + 마지막 답글 유도 질문. 이모지 최소.",
  "ig_caption": "후킹 1줄 + 요약 3~4문장 + '프로필 링크에서 더 보기' CTA + 해시태그 8개(#포함, 공백구분)",
  "cards": [
    {"type":"cover","kicker":"","title":"표지 대제목(≤14자, 강한후킹)","body":"부제(≤30자)"},
@@ -149,7 +149,14 @@ async function fapi(base, ep, params, tok) {
   const res = await fetch(`${base}/${ep}`, { method: 'POST', body });
   return res.json();
 }
+function clampThreads(text) {
+  if (text.length <= 500) return text;
+  const cut = text.slice(0, 500);
+  const br = Math.max(cut.lastIndexOf('\n'), cut.lastIndexOf('다.'), cut.lastIndexOf('. '), cut.lastIndexOf('? '), cut.lastIndexOf('! '));
+  return (br > 300 ? cut.slice(0, br + 1) : cut.slice(0, 499)).trim();
+}
 async function publishThreads(text, tok) {
+  text = clampThreads(text);
   const b = 'https://graph.threads.net/v1.0';
   const c = await fapi(b, 'me/threads', { media_type: 'TEXT', text }, tok);
   if (!c.id) throw new Error('threads container ' + JSON.stringify(c));
