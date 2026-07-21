@@ -102,8 +102,9 @@ ${facts || '(수집된 사실 없음 — 네 지식으로 구체적으로 채우
 - 과장·허위·투자권유·정치·성·자극 금지. 사실만.
 
 [채널 규격 — 엄수]
-- 캐러셀 8장: 1장=통념 반박형 강한 훅, 2~7장=구체 정보 한 컷씩(서로 다른 포인트), 8장=저장·팔로우 CTA.
-- 인스타 캡션: 첫 줄에 핵심 키워드 포함 + 구체 요약 3문장 + "○○한 친구에게 공유하세요" 공유 트리거 1개 + "프로필 링크에서 더 보기" + 해시태그 4~5개(분류용, #포함 공백구분).
+- 캐러셀 8장: 1장=통념 반박형 강한 훅, 2~7장=구체 정보 한 컷씩(서로 다른 포인트), 8장=CTA.
+- ★2026 최우선 신호 = 저장 + DM공유(좋아요의 3~5배). CTA와 캡션에 "저장해두세요"와 "이런 친구에게 공유하세요"를 반드시 자연스럽게 넣어라.
+- 인스타 캡션: 첫 줄은 핵심 키워드로 시작하는 검색가능한 자연 문장(해시태그로 시작 금지) + 구체 요약 3문장 + "○○한 친구에게 공유하세요" 공유 트리거 + "프로필 링크에서 더 보기" + 해시태그 4~5개(고관련성, #포함 공백구분).
 - 스레드: 첫 줄 60자 내 통념 반박/의외 사실 훅 + 구체 근거 2~3문장 + 답글 유도 질문. 반드시 450자 이내.
 
 JSON만 출력(마크다운 금지):
@@ -119,7 +120,7 @@ JSON만 출력(마크다운 금지):
    {"type":"body","kicker":"","title":"","body":""},
    {"type":"body","kicker":"","title":"","body":""},
    {"type":"body","kicker":"","title":"","body":""},
-   {"type":"cta","kicker":"","title":"저장 유도(≤16자)","body":"팔로우+저장 유도 한 줄"}
+   {"type":"cta","kicker":"","title":"저장 & 공유(≤16자)","body":"저장하고 관심 있는 친구에게 공유·팔로우 유도 한 줄"}
  ]
 }
 정확히 8장. 2~7번은 각기 다른 구체 정보로.`;
@@ -146,7 +147,7 @@ h2{font-size:70px;font-weight:800;line-height:1.16;letter-spacing:-1.5px}
 <div class=foot><span id=fl></span><span class=num id=fr></span></div></div>
 <script>const C=${JSON.stringify(cards)};const q=new URLSearchParams(location.search);const i=Math.max(0,Math.min(C.length-1,parseInt(q.get('s')||'0')));const c=C[i];
 let h='';if(c.type==='cover'){h='<div class=emoji>🔎</div><h1>'+c.title+'</h1>'+(c.body?'<div class=tag>'+c.body+'</div>':'');}
-else if(c.type==='cta'){h='<div class=emoji>📌</div><h2>'+c.title+'</h2>'+(c.body?'<div class=body>'+c.body+'</div>':'')+'<div class=cta-btn>팔로우 + 저장하기 🔖</div>';}
+else if(c.type==='cta'){h='<div class=emoji>📌</div><h2>'+c.title+'</h2>'+(c.body?'<div class=body>'+c.body+'</div>':'')+'<div class=cta-btn>저장 + 친구에게 공유 🔖</div>';}
 else{h=(c.kicker?'<div class=kicker>'+c.kicker+'</div>':'')+'<h2>'+c.title+'</h2>'+(c.body?'<div class=body>'+c.body+'</div>':'');}
 document.getElementById('m').innerHTML=h;document.getElementById('fr').textContent=(i+1)+' / '+C.length;document.getElementById('fl').textContent=i===0?'SWIPE →':'@gu__planner';</script></body></html>`;
 }
@@ -203,10 +204,12 @@ function clampThreads(text) {
   const br = Math.max(cut.lastIndexOf('\n'), cut.lastIndexOf('다.'), cut.lastIndexOf('. '), cut.lastIndexOf('? '), cut.lastIndexOf('! '));
   return (br > 300 ? cut.slice(0, br + 1) : cut.slice(0, 499)).trim();
 }
-async function publishThreads(text, tok) {
+async function publishThreads(text, imageUrl, tok) {
   text = clampThreads(text);
   const b = 'https://graph.threads.net/v1.0';
-  const c = await fapi(b, 'me/threads', { media_type: 'TEXT', text }, tok);
+  // 2026 동향: 이미지 첨부 게시물이 텍스트 전용보다 참여율 +60% → 커버 카드 첨부
+  const params = imageUrl ? { media_type: 'IMAGE', image_url: imageUrl, text } : { media_type: 'TEXT', text };
+  const c = await fapi(b, 'me/threads', params, tok);
   if (!c.id) throw new Error('threads container ' + JSON.stringify(c));
   await new Promise(r => setTimeout(r, 2000));
   const p = await fapi(b, 'me/threads_publish', { creation_id: c.id }, tok);
@@ -280,8 +283,8 @@ const log = (...a) => console.log('[pipe]', ...a);
 
   if (DRY) { log('DRY-RUN 종료 — 발행 안 함. 카피/이미지 준비까지 성공.'); log('THREADS 미리보기:\n' + copy.threads_text); log('CAPTION 미리보기:\n' + copy.ig_caption); return; }
 
-  const tid = await publishThreads(copy.threads_text, process.env.TH_TOK);
-  log('THREADS 발행:', tid);
+  const tid = await publishThreads(copy.threads_text, urls[0], process.env.TH_TOK);
+  log('THREADS 발행(이미지첨부):', tid);
   const iid = await publishIG(copy.ig_caption, urls, process.env.IG_TOK);
   log('INSTAGRAM 발행:', iid);
   await recordPost({ date: process.env.RUN_DATE || '', slot, keyword, topic: copy.topic, ig_id: iid, th_id: tid, folder });
