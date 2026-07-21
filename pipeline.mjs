@@ -66,27 +66,64 @@ const SAFE_TOPICS = ['생활 속 절세 팁', '초보 재테크 기초', '스마
   '냉장고 정리의 기술', '수면의 질 높이는 법', '엑셀 단축키 모음', '전기요금 아끼는 법',
   '알아두면 쓸모있는 생활 법률', '커피 맛있게 내리는 법', '운동 초보 루틴', '시간관리 기법'];
 
-// ---- 2-b. 카피 생성 ----
-async function genCopy(keyword) {
-  const prompt = `너는 한국어 SNS 콘텐츠 작가다. 키워드 "${keyword}"로 인스타 카드뉴스 + 스레드 글을 만든다.
-독자가 "몰랐던 사실/맥락"을 알게 되는 정보성 콘텐츠. 과장·허위·투자권유·정치·자극 금지. 반드시 아래 JSON만 출력(마크다운·설명 금지):
+// ---- 2-b. 실사실 수집 (그라운딩 = 얕은 일반론 방지) ----
+async function geminiGrounded(prompt) {
+  const url = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent';
+  for (let attempt = 0; attempt < 4; attempt++) {
+    try {
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'x-goog-api-key': GEMINI_KEY },
+        body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }], tools: [{ google_search: {} }] })
+      });
+      const j = await res.json();
+      if (res.ok && j.candidates) return (j.candidates[0]?.content?.parts || []).map(p => p.text || '').join('');
+      if (![429, 500, 503].includes(res.status)) return '';
+    } catch { /* retry */ }
+    await new Promise(r => setTimeout(r, 2000 * (attempt + 1)));
+  }
+  return '';
+}
+async function gatherFacts(keyword) {
+  const t = await geminiGrounded(`"${keyword}"에 대해 한국어 SNS 정보성 카드뉴스에 쓸 구체적이고 검증된 사실을 6~8개 뽑아줘. 각 사실은 숫자·고유명사·구체 맥락 중 하나 이상을 포함해야 하고, 뻔한 일반론("인기 많다", "매력적이다" 류)은 제외. 불릿(-)으로만 출력.`);
+  return (t || '').slice(0, 2200);
+}
+
+// ---- 2-c. 카피 생성 (채널 스펙 + 구체성 강제) ----
+async function genCopy(keyword, facts) {
+  const prompt = `너는 한국 SNS 콘텐츠 전문 작가다. 키워드 "${keyword}"로 인스타 카드뉴스 8장 + 스레드 글을 만든다.
+
+[활용할 실제 사실 — 이 구체 정보(숫자·고유명사·맥락)를 카드에 반드시 녹여라]
+${facts || '(수집된 사실 없음 — 네 지식으로 구체적으로 채우되 절대 지어내지 마라)'}
+
+[절대 규칙]
+- 뜬구름·일반론 금지. "전략 분석", "매력 포인트", "핵심 정리" 같은 빈 표현 금지.
+- 본문 카드(2~7장)는 각각 서로 다른 "구체적 사실/숫자/이름/사례"를 1개 이상 담아 독자가 몰랐던 걸 알게 한다.
+- 과장·허위·투자권유·정치·성·자극 금지. 사실만.
+
+[채널 규격 — 엄수]
+- 캐러셀 8장: 1장=통념 반박형 강한 훅, 2~7장=구체 정보 한 컷씩(서로 다른 포인트), 8장=저장·팔로우 CTA.
+- 인스타 캡션: 첫 줄에 핵심 키워드 포함 + 구체 요약 3문장 + "○○한 친구에게 공유하세요" 공유 트리거 1개 + "프로필 링크에서 더 보기" + 해시태그 4~5개(분류용, #포함 공백구분).
+- 스레드: 첫 줄 60자 내 통념 반박/의외 사실 훅 + 구체 근거 2~3문장 + 답글 유도 질문. 반드시 450자 이내.
+
+JSON만 출력(마크다운 금지):
 {
- "topic": "이 키워드를 다루는 구체 앵글 한 줄",
- "threads_text": "반드시 450자 이내(엄수). 후킹 첫 줄 + 핵심 2~3문단 + 마지막 답글 유도 질문. 이모지 최소.",
- "ig_caption": "후킹 1줄 + 요약 3~4문장 + '프로필 링크에서 더 보기' CTA + 해시태그 8개(#포함, 공백구분)",
+ "topic": "구체 앵글 한 줄",
+ "threads_text": "...",
+ "ig_caption": "...",
  "cards": [
-   {"type":"cover","kicker":"","title":"표지 대제목(≤14자, 강한후킹)","body":"부제(≤30자)"},
-   {"type":"body","kicker":"소제목(≤10자)","title":"대제목(≤14자)","body":"본문(≤45자)"},
+   {"type":"cover","kicker":"","title":"표지 대제목(≤16자, 강한 후킹)","body":"부제(≤32자)"},
+   {"type":"body","kicker":"소제목(≤12자)","title":"핵심 대제목(≤18자)","body":"구체 사실 본문(≤55자, 숫자·이름 포함)"},
    {"type":"body","kicker":"","title":"","body":""},
    {"type":"body","kicker":"","title":"","body":""},
    {"type":"body","kicker":"","title":"","body":""},
    {"type":"body","kicker":"","title":"","body":""},
    {"type":"body","kicker":"","title":"","body":""},
-   {"type":"cta","kicker":"","title":"저장 유도 대제목(≤14자)","body":"팔로우+저장 유도 한 줄"}
+   {"type":"cta","kicker":"","title":"저장 유도(≤16자)","body":"팔로우+저장 유도 한 줄"}
  ]
 }
-정확히 8장. 2~7번은 내용으로 채운다.`;
-  return geminiJSON(prompt, 0.9);
+정확히 8장. 2~7번은 각기 다른 구체 정보로.`;
+  return geminiJSON(prompt, 0.8);
 }
 
 // ---- 3. 카드 렌더 ----
@@ -99,8 +136,8 @@ background:radial-gradient(1200px 700px at 80% -10%,rgba(124,92,255,.35),transpa
 .badge{display:inline-flex;align-items:center;gap:14px;font-size:30px;font-weight:700;color:#b9c2ff}.dot{width:14px;height:14px;border-radius:50%;background:#7c5cff;box-shadow:0 0 24px #7c5cff}
 .sp{flex:1}.kicker{font-size:36px;font-weight:600;color:#8ea0ff;margin-bottom:24px}
 h1{font-size:100px;font-weight:800;line-height:1.1;letter-spacing:-2px}.hl{color:#9d86ff}
-h2{font-size:78px;font-weight:800;line-height:1.14;letter-spacing:-1.5px}
-.body{font-size:46px;font-weight:500;line-height:1.5;color:#c7cfe6;margin-top:34px;max-width:840px}
+h2{font-size:70px;font-weight:800;line-height:1.16;letter-spacing:-1.5px}
+.body{font-size:41px;font-weight:500;line-height:1.5;color:#c7cfe6;margin-top:32px;max-width:880px}
 .tag{margin-top:40px;font-size:46px;color:#c7cfe6;font-weight:600;line-height:1.4}
 .foot{display:flex;justify-content:space-between;align-items:center;font-size:30px;color:#8b95b5;font-weight:600}.num{color:#7c5cff;font-weight:800}
 .cta-btn{margin-top:52px;display:inline-flex;background:#7c5cff;color:#fff;font-size:46px;font-weight:800;padding:32px 54px;border-radius:999px;box-shadow:0 20px 60px rgba(124,92,255,.5)}
@@ -209,7 +246,9 @@ const log = (...a) => console.log('[pipe]', ...a);
   }
   log('선택 키워드:', keyword);
 
-  const copy = await genCopy(keyword);
+  const facts = await gatherFacts(keyword);
+  log('수집 사실:', facts ? facts.replace(/\n/g, ' ').slice(0, 120) + '…' : '(그라운딩 실패 — 지식 기반)');
+  const copy = await genCopy(keyword, facts);
   log('앵글:', copy.topic);
   log('카드수:', copy.cards?.length, '| 스레드길이:', copy.threads_text?.length);
 
