@@ -213,14 +213,17 @@ const log = (...a) => console.log('[pipe]', ...a);
   log('앵글:', copy.topic);
   log('카드수:', copy.cards?.length, '| 스레드길이:', copy.threads_text?.length);
 
-  const slug = keyword.replace(/[^가-힣a-zA-Z0-9]/g, '').slice(0, 20) || 'kw';
-  const folder = `auto/${process.env.RUN_DATE || 'dryrun'}-${slug}${DRY ? '-dry' : ''}`;
+  // 폴더 슬러그는 ASCII만 (인스타 미디어 페처가 비ASCII URL을 못 읽음)
+  const hash = [...keyword].reduce((a, c) => ((a * 31 + c.charCodeAt(0)) >>> 0), 7).toString(36).slice(0, 6);
+  const folder = `auto/${process.env.RUN_DATE || 'dryrun'}-s${slot}-${hash}${DRY ? '-dry' : ''}`;
   const tmp = path.join(ROOT, '.render');
   await renderCards(copy.cards, tmp);
   log('카드 렌더 완료:', copy.cards.length, '장');
 
   const base = hostImages(tmp, folder);
-  const urls = copy.cards.map((_, i) => `${base}/card-${i + 1}.png`);
+  // 인스타 발행용 URL은 raw.githubusercontent (푸시 즉시 제공 — jsDelivr CDN 전파 대기 회피)
+  const rawBase = `https://raw.githubusercontent.com/${REPO}/main/${folder}`;
+  const urls = copy.cards.map((_, i) => `${rawBase}/card-${i + 1}.png`);
   log('호스팅:', base);
 
   await fs.writeFile(path.join(ROOT, '.render', 'copy.json'), JSON.stringify(copy, null, 2));
