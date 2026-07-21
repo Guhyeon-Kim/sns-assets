@@ -1,0 +1,58 @@
+name: SNS 자동 발행
+
+on:
+  schedule:
+    - cron: '0 0 * * *'   # 09:00 KST
+    - cron: '0 2 * * *'   # 11:00 KST
+    - cron: '0 4 * * *'   # 13:00 KST
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: '드라이런(발행 안 함)'
+        type: boolean
+        default: true
+      slot:
+        description: '슬롯(0/1/2)'
+        default: '0'
+
+concurrency:
+  group: sns-publish
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    # 킬스위치: 저장소 변수 SNS_AUTO_ENABLED=true 일 때만 스케줄 발행. 수동 실행은 항상 허용.
+    if: ${{ vars.SNS_AUTO_ENABLED == 'true' || github.event_name == 'workflow_dispatch' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: 슬롯·날짜 결정
+        id: cfg
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "slot=${{ github.event.inputs.slot }}" >> "$GITHUB_OUTPUT"
+          else
+            H=$(date -u +%H)
+            case $H in 00) S=0;; 02) S=1;; 04) S=2;; *) S=0;; esac
+            echo "slot=$S" >> "$GITHUB_OUTPUT"
+          fi
+          echo "date=$(TZ=Asia/Seoul date +%Y-%m-%d)" >> "$GITHUB_OUTPUT"
+      - name: git 신원
+        run: |
+          git config user.name "sns-bot"
+          git config user.email "actions@users.noreply.github.com"
+      - name: 파이프라인 실행
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          IG_TOK: ${{ secrets.IG_TOK }}
+          TH_TOK: ${{ secrets.TH_TOK }}
+          RUN_DATE: ${{ steps.cfg.outputs.date }}
+          CHROME_BIN: google-chrome
+        run: |
+          node pipeline.mjs ${{ (github.event_name == 'workflow_dispatch' && github.event.inputs.dry_run == 'true') && '--dry-run' || '' }} --slot=${{ steps.cfg.outputs.slot }}
