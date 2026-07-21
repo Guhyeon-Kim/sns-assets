@@ -1,0 +1,32 @@
+name: 토큰 자동 갱신
+
+# IG·스레드 장기 토큰(60일)을 매주 갱신해 만료로 인한 발행 중단을 방지.
+# 갱신은 토큰이 24h 이상 됐을 때만 성공 — 주간 실행이라 60일 창 안에 충분한 재시도 여유.
+# 갱신된 토큰을 GH Secrets(IG_TOK/TH_TOK)에 다시 저장하려면 secrets:write 권한 PAT(TOKEN_ADMIN_PAT) 필요.
+
+on:
+  schedule:
+    - cron: '0 3 * * 1'   # 매주 월요일 12:00 KST
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 토큰 갱신 및 저장
+        env:
+          IG_TOK: ${{ secrets.IG_TOK }}
+          TH_TOK: ${{ secrets.TH_TOK }}
+          GH_TOKEN: ${{ secrets.TOKEN_ADMIN_PAT }}
+          R: ${{ github.repository }}
+        run: |
+          if [ -z "$GH_TOKEN" ]; then echo "::error::TOKEN_ADMIN_PAT 시크릿 미설정 — 갱신값을 저장할 수 없음"; exit 1; fi
+          IG_RES=$(curl -s "https://graph.instagram.com/refresh_access_token?grant_type=ig_refresh_token&access_token=$IG_TOK")
+          TH_RES=$(curl -s "https://graph.threads.net/refresh_access_token?grant_type=th_refresh_token&access_token=$TH_TOK")
+          NEW_IG=$(echo "$IG_RES" | jq -r '.access_token // empty')
+          NEW_TH=$(echo "$TH_RES" | jq -r '.access_token // empty')
+          if [ -n "$NEW_IG" ]; then printf '%s' "$NEW_IG" | gh secret set IG_TOK --repo "$R"; echo "✅ IG 토큰 갱신 (60일 연장)"; else echo "⚠️ IG 갱신 안 됨: $(echo "$IG_RES" | jq -c '.error // .' | head -c 200) — 다음 주 재시도"; fi
+          if [ -n "$NEW_TH" ]; then printf '%s' "$NEW_TH" | gh secret set TH_TOK --repo "$R"; echo "✅ TH 토큰 갱신 (60일 연장)"; else echo "⚠️ TH 갱신 안 됨: $(echo "$TH_RES" | jq -c '.error // .' | head -c 200) — 다음 주 재시도"; fi
