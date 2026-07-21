@@ -207,11 +207,16 @@ function clampThreads(text) {
 async function publishThreads(text, imageUrl, tok) {
   text = clampThreads(text);
   const b = 'https://graph.threads.net/v1.0';
-  // 2026 동향: 이미지 첨부 게시물이 텍스트 전용보다 참여율 +60% → 커버 카드 첨부
-  const params = imageUrl ? { media_type: 'IMAGE', image_url: imageUrl, text } : { media_type: 'TEXT', text };
-  const c = await fapi(b, 'me/threads', params, tok);
+  // 2026 동향: 이미지 첨부 게시물이 텍스트 전용보다 참여율 +60% → 커버 카드 첨부.
+  // 이미지 컨테이너 실패 시(예: 포맷 거부) 텍스트로 자동 폴백 — 스레드 발행이 절대 깨지지 않게.
+  let c = null;
+  if (imageUrl) {
+    c = await fapi(b, 'me/threads', { media_type: 'IMAGE', image_url: imageUrl, text }, tok);
+    if (!c.id) { console.log('[pipe] 스레드 이미지첨부 실패→텍스트 폴백:', JSON.stringify(c.error || c).slice(0, 140)); c = null; }
+  }
+  if (!c) c = await fapi(b, 'me/threads', { media_type: 'TEXT', text }, tok);
   if (!c.id) throw new Error('threads container ' + JSON.stringify(c));
-  await new Promise(r => setTimeout(r, 2000));
+  await new Promise(r => setTimeout(r, 2500));
   const p = await fapi(b, 'me/threads_publish', { creation_id: c.id }, tok);
   if (!p.id) throw new Error('threads publish ' + JSON.stringify(p));
   return p.id;
