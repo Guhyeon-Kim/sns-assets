@@ -141,18 +141,26 @@ async function deleteUnexpected(kind, id, token) {
   if (!response.ok) throw new Error(`비초안 삭제 실패: ${await responseError(response)}`);
 }
 
-async function publishDraft(item, token) {
+export function livePublishingAllowed(args, env = process.env) {
+  return args.includes('--no-draft') && env.PUBLISH_LIVE === 'yes';
+}
+
+async function publishItem(item, token, live) {
   const endpoint = item.kind === 'post' ? 'posts' : 'pages';
-  const url = `https://www.googleapis.com/blogger/v3/blogs/${encodeURIComponent(process.env.BLOGGER_BLOG_ID)}/${endpoint}?isDraft=true`;
+  const query = live ? '' : '?isDraft=true';
+  const url = `https://www.googleapis.com/blogger/v3/blogs/${encodeURIComponent(process.env.BLOGGER_BLOG_ID)}/${endpoint}${query}`;
   const payload = { kind: `blogger#${item.kind}`, title: item.title, content: item.content };
   if (item.kind === 'post' && item.labels.length) payload.labels = item.labels;
   const response = await requestWithRetry(url, {
     method: 'POST',
     headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
     body: JSON.stringify(payload)
-  }, `${item.kind} 초안 업로드`);
+  }, `${item.kind} ${live ? '공개' : '초안'} 업로드`);
   const result = await response.json();
-  if (result.status !== 'DRAFT') {
+  const expected = live ? 'LIVE' : 'DRAFT';
+  if (result.status !== expected) {
+    // 초안 요청이 LIVE가 된 경우에만 즉시 되돌린다. 공개 요청이 DRAFT로 남은 것은 안전하므로 보존한다.
+    if (live) throw new Error(`응답 status=${result.status || '없음'}, 기대=${expected}; 생성 항목은 공개하지 않고 보존했습니다`);
     if (!result.id) throw new Error(`응답 status=${result.status || '없음'}, 삭제할 id도 없음`);
     await deleteUnexpected(item.kind, result.id, token);
     throw new Error(`응답 status=${result.status || '없음'}: 비초안 항목을 즉시 삭제했습니다`);
@@ -168,9 +176,10 @@ export async function main(args = process.argv.slice(2)) {
   const outPath = outArg?.slice('--out='.length) || 'blogger-result.jsonl';
   const files = args.filter((arg) => !arg.startsWith('--'));
   const requestedLive = args.includes('--no-draft');
+  const live = livePublishingAllowed(args);
   if (requestedLive) {
-    const lock = process.env.PUBLISH_LIVE === 'yes' ? '이중 잠금이 설정됐지만 현재 정책상' : 'PUBLISH_LIVE=yes 이중 잠금이 없어';
-    console.error(`[blogger][WARN] ${lock} 공개 발행은 금지됩니다. 초안으로 강제합니다.`);
+    if (!live) console.error('[blogger][WARN] PUBLISH_LIVE=yes 이중 잠금이 없어 공개 발행을 초안으로 강제합니다.');
+    else console.error('[blogger][WARN] --no-draft + PUBLISH_LIVE=yes 이중 잠금 확인: 공개 발행합니다.');
   }
   if (!files.length) throw new Error('사용법: node blogger-publish.mjs [--draft] [--out=경로] <file.md ...>');
 
@@ -183,7 +192,7 @@ export async function main(args = process.argv.slice(2)) {
     try {
       const source = await fs.readFile(file, 'utf8');
       item = parseFrontmatter(source, file);
-      record = await publishDraft(item, token);
+      record = await publishItem(item, token, live);
     } catch (error) {
       failed = true;
       record = { kind: item?.kind || null, title: item?.title || file, id: null, url: null, status: 'FAILED', ok: false, error: error.message };
@@ -195,7 +204,7 @@ export async function main(args = process.argv.slice(2)) {
   if (failed) process.exitCode = 1;
 }
 
-if (import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   main().catch((error) => {
     console.error('[blogger][ERROR]', error.message);
     process.exit(1);

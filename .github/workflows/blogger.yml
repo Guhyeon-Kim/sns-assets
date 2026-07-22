@@ -42,6 +42,7 @@ jobs:
           BLOGGER_BLOG_ID: ${{ secrets.BLOGGER_BLOG_ID }}
           INPUT_FILES: ${{ inputs.files }}
           INPUT_IS_DRAFT: ${{ inputs.is_draft }}
+          PUBLISH_LIVE: ${{ inputs.is_draft == false && 'yes' || 'no' }}
         run: |
           FLAGS="--draft"
           if [ "$INPUT_IS_DRAFT" != "true" ]; then FLAGS="--no-draft"; fi
