@@ -1,3 +1,5 @@
 .render/
 node_modules/
 *.log
+content/drafts/
+blogger-result.jsonl

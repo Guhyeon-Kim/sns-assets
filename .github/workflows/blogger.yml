@@ -1,0 +1,57 @@
+name: Blogger 초안 발행
+
+on:
+  # schedule:
+  #   - cron: '0 0 * * *'  # 향후 자동화용(현재 비활성)
+  workflow_dispatch:
+    inputs:
+      files:
+        description: '발행할 md 파일 경로(공백 또는 줄바꿈 구분)'
+        required: true
+        type: string
+      is_draft:
+        description: '초안 발행(안전상 false도 초안으로 강제)'
+        required: true
+        type: boolean
+        default: true
+
+concurrency:
+  group: blogger-publish
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    # 킬스위치: 향후 스케줄은 BLOGGER_AUTO_ENABLED=true에서만 허용. 수동 실행은 항상 허용.
+    if: ${{ vars.BLOGGER_AUTO_ENABLED == 'true' || github.event_name == 'workflow_dispatch' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: 발행기 단위 테스트
+        run: node --test blogger-publish.test.mjs
+      - name: Blogger 초안 업로드
+        env:
+          BLOGGER_CLIENT_ID: ${{ secrets.BLOGGER_CLIENT_ID }}
+          BLOGGER_CLIENT_SECRET: ${{ secrets.BLOGGER_CLIENT_SECRET }}
+          BLOGGER_REFRESH_TOKEN: ${{ secrets.BLOGGER_REFRESH_TOKEN }}
+          BLOGGER_BLOG_ID: ${{ secrets.BLOGGER_BLOG_ID }}
+          INPUT_FILES: ${{ inputs.files }}
+          INPUT_IS_DRAFT: ${{ inputs.is_draft }}
+        run: |
+          FLAGS="--draft"
+          if [ "$INPUT_IS_DRAFT" != "true" ]; then FLAGS="--no-draft"; fi
+          readarray -t FILES < <(printf '%s\n' "$INPUT_FILES" | tr ' ' '\n' | sed '/^$/d')
+          node blogger-publish.mjs "$FLAGS" --out=blogger-result.jsonl "${FILES[@]}"
+      - name: 발행 증거 업로드
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: blogger-result
+          path: blogger-result.jsonl
+          if-no-files-found: warn
+          retention-days: 7
